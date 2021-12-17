@@ -10,7 +10,6 @@ import android.os.IBinder
 import android.util.Log
 import android.view.View
 import androidx.activity.viewModels
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.preference.PreferenceManager
 import com.example.trackingroute.R
 
@@ -19,13 +18,14 @@ import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.MarkerOptions
 import com.example.trackingroute.databinding.ActivityMapsBinding
+import com.example.trackingroute.model.database.LocationEntity
 import com.example.trackingroute.model.location.LocationUpdatesService
 import com.example.trackingroute.model.location.Utils
 import com.example.trackingroute.ui.permission.PermissionRequestFragment
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
+import dagger.hilt.android.AndroidEntryPoint
 
 /*
     紀錄GPS，存到Room，輸出GPX
@@ -59,14 +59,13 @@ private const val TRACK_START = 0
 private const val TRACK_PAUSE = 1
 private const val TRACK_RESUME = 2
 private const val TRACK_STOP = 3
+@AndroidEntryPoint
 class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreferenceChangeListener {
 
     private lateinit var mMap: GoogleMap
     private lateinit var binding: ActivityMapsBinding
     private val viewModel: MapsViewModel by viewModels()
 
-    // The BroadcastReceiver used to listen from broadcasts from the service.
-    private val myReceiver: MyReceiver = MyReceiver()
     private var mService: LocationUpdatesService? = null
     private var mBound = false
     private var polylineOptions = PolylineOptions()
@@ -117,19 +116,6 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         )
     }
 
-    override fun onResume() {
-        super.onResume()
-        LocalBroadcastManager.getInstance(this).registerReceiver(
-            myReceiver,
-            IntentFilter(LocationUpdatesService.ACTION_BROADCAST)
-        )
-    }
-
-    override fun onPause() {
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(myReceiver)
-        super.onPause()
-    }
-
     override fun onStop() {
         if (mBound) {
             // Unbind from the service. This signals to the service that this activity is no longer
@@ -144,6 +130,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     }
 
     override fun onDestroy() {
+        //TODO("service被同步kill了")
         super.onDestroy()
     }
 
@@ -186,26 +173,18 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         if (viewModel.hasLocationPermission.value == true) mMap.isMyLocationEnabled = true
     }
 
+    private fun drawPolylineList(locationList: List<Location>) {
+        polyline?.remove()
+        locationList.forEach {
+            polylineOptions.add(LatLng(it.latitude, it.longitude))
+        }
+        polyline = mMap.addPolyline(polylineOptions)
+    }
+
     private fun drawPolyline(location: Location) {
         polyline?.remove()
         polylineOptions.add(LatLng(location.latitude, location.longitude))
         polyline = mMap.addPolyline(polylineOptions)
-    }
-
-    //receiver
-
-    /**
-     * Receiver for broadcasts sent by [LocationUpdatesService].
-     */
-    private inner class MyReceiver : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val location =
-                intent.getParcelableExtra<Location>(LocationUpdatesService.EXTRA_LOCATION)
-            if (location != null && this@MapsActivity::mMap.isInitialized) {
-                mMap.animateCamera(CameraUpdateFactory.newLatLng(LatLng(location.latitude, location.longitude)))
-                drawPolyline(location)
-            }
-        }
     }
 
     //ui
@@ -213,6 +192,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     private fun initObserve() {
         with(viewModel) {
             hasLocationPermission.observe(this@MapsActivity, ::handleHasLocationPermission)
+            locationList.observe(this@MapsActivity, ::handleLocationList)
         }
     }
 
@@ -220,6 +200,25 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     private fun handleHasLocationPermission(hasLocationPermission: Boolean?) {
         if (hasLocationPermission == null) return
         if (this::mMap.isInitialized) mMap.isMyLocationEnabled = hasLocationPermission
+    }
+
+    private fun handleLocationList(locationEntityList: List<LocationEntity>?) {
+        if (locationEntityList.isNullOrEmpty()) return
+        val locationList = mutableListOf<Location>()
+        for (i in polylineOptions.points.size until locationEntityList.size) {
+            val locationEntity = locationEntityList[i]
+            locationList.add(Location("").apply {
+                latitude = locationEntity.lat
+                longitude = locationEntity.lng
+                altitude = locationEntity.ele
+                time = locationEntity.time
+            })
+        }
+        if (this@MapsActivity::mMap.isInitialized) {
+            mMap.animateCamera(CameraUpdateFactory.newLatLng(LatLng(locationEntityList.last().lat,
+                locationEntityList.last().lng)))
+            drawPolylineList(locationList)
+        }
     }
 
     private fun initButton() {
@@ -231,7 +230,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
             } else {
                 TRACK_STOP
             }
-        setButtonsState(currentState)
+        setButtonState(currentState)
 
         binding.apply {
             fabMapsStart.setOnClickListener {
@@ -250,6 +249,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                 mService?.removeLocationUpdates()
                 polylineOptions = PolylineOptions()
                 polyline?.remove()
+                viewModel.clearLocationList()
             }
         }
     }
@@ -258,14 +258,14 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         if (sharedPreferences == null) return
         // Update the buttons state depending on whether location updates are being requested.
         if (s == Utils.KEY_REQUESTING_LOCATION_UPDATES) {
-            setButtonsState(
+            setButtonState(
                 if (sharedPreferences.getBoolean(Utils.KEY_REQUESTING_LOCATION_UPDATES, false))
                     TRACK_START
                 else
                     TRACK_STOP
             )
         } else if (s == Utils.KEY_PAUSING_LOCATION_UPDATES) {
-            setButtonsState(
+            setButtonState(
                 if (sharedPreferences.getBoolean(Utils.KEY_PAUSING_LOCATION_UPDATES, false))
                     TRACK_PAUSE
                 else
@@ -274,8 +274,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         }
     }
 
-    private fun setButtonsState(state: Int) {
-        Log.d(TAG, "setButtonsState: state: $state")
+    private fun setButtonState(state: Int) {
         binding.apply {
             when(state) {
                 TRACK_START -> {

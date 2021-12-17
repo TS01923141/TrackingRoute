@@ -11,10 +11,17 @@ import androidx.core.app.NotificationCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.example.trackingroute.BuildConfig
 import com.example.trackingroute.R
+import com.example.trackingroute.model.database.LocationDatabase
+import com.example.trackingroute.model.database.LocationEntity
+import com.example.trackingroute.model.repository.LocationRepository
 import com.example.trackingroute.model.utils.KalmanLatLong
 import com.example.trackingroute.ui.maps.MapsActivity
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.OnCompleteListener
+import com.squareup.moshi.internal.Util
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.*
+import javax.inject.Inject
 
 private const val CHANNEL_ID = "tracking_route_channel"
 private const val TAG = "LocationUpdatesService"
@@ -22,12 +29,17 @@ private const val PACKAGE_NAME = "com.example.trackingroute.model.location"
 private const val EXTRA_STARTED_FROM_NOTIFICATION: String =
     "$PACKAGE_NAME.started_from_notification"
 
+@AndroidEntryPoint
 class LocationUpdatesService : Service() {
 
     companion object {
         const val EXTRA_LOCATION: String = "$PACKAGE_NAME.location"
         const val ACTION_BROADCAST: String = "$PACKAGE_NAME.broadcast"
     }
+
+    @Inject lateinit var repository: LocationRepository
+
+    private var insertLocationJob: Job? = null
 
     private val mBinder: IBinder = LocalBinder()
 
@@ -84,7 +96,41 @@ class LocationUpdatesService : Service() {
 
     private fun LocationUpdatesService() {}
 
+    /**
+     * Class used for the client Binder.  Since this service runs in the same process as its
+     * clients, we don't need to deal with IPC.
+     */
+    inner class LocalBinder : Binder() {
+        val service: LocationUpdatesService
+            get() = this@LocationUpdatesService
+    }
+
+    /**
+     * Returns true if this is a foreground service.
+     *
+     * @param context The [Context].
+     */
+    fun serviceIsRunningInForeground(context: Context): Boolean {
+        val manager = context.getSystemService(
+            ACTIVITY_SERVICE
+        ) as ActivityManager
+        for (service in manager.getRunningServices(Int.MAX_VALUE)) {
+            if (javaClass.name == service.service.className) {
+                if (service.foreground) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    //lifecycle
+
     override fun onCreate() {
+        super.onCreate()
+        //pausing status
+        trackPausing = Utils.pausingLocationUpdates(this)
+        //init location setting
         mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         mLocationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
@@ -94,7 +140,7 @@ class LocationUpdatesService : Service() {
         }
         createLocationRequest()
         getLastLocation()
-
+        //init notification setting
         mNotificationManager =
             getSystemService(NOTIFICATION_SERVICE) as NotificationManager// Android O requires a Notification Channel.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -109,6 +155,8 @@ class LocationUpdatesService : Service() {
             // Set the Notification Channel for the Notification Manager.
             mNotificationManager.createNotificationChannel(mChannel)
         }
+        //check tracking status and auto recover tracking
+        if (Utils.requestingLocationUpdates(this)) requestLocationUpdates()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -121,8 +169,8 @@ class LocationUpdatesService : Service() {
             removeLocationUpdates()
             stopSelf()
         }
-        // Tells the system to not try to recreate the service after it has been killed.
-        return START_NOT_STICKY
+        // if service be killed, auto recover when memory is enough.
+        return START_STICKY
     }
 
     override fun onBind(p0: Intent?): IBinder? {
@@ -152,6 +200,13 @@ class LocationUpdatesService : Service() {
         }
         return true // Ensures onRebind() is called when a client re-binds.
     }
+
+    override fun onDestroy() {
+        insertLocationJob?.cancel()
+        super.onDestroy()
+    }
+
+    // location request
 
     /**
      * Makes a request for location updates. Note that in this sample we merely log the
@@ -199,6 +254,89 @@ class LocationUpdatesService : Service() {
         }
     }
 
+    private fun getLastLocation() {
+        try {
+            mFusedLocationClient.lastLocation
+                .addOnCompleteListener(OnCompleteListener<Location> { task ->
+                    if (task.isSuccessful && task.result != null) {
+                        Log.d(TAG, "getLastLocation: ")
+                        filterAndUpdateLocation(task.result)
+                    } else {
+                        Log.w(TAG, "Failed to get location.")
+                    }
+                })
+        } catch (unlikely: SecurityException) {
+            Log.e(TAG, "Lost location permission.$unlikely")
+        }
+    }
+
+    private fun onNewLocation(location: Location) {
+
+        filterAndUpdateLocation(location)
+
+        insertLocationJob = CoroutineScope(Dispatchers.IO).launch {
+            repository.insert(location)
+        }
+
+        if (trackPausing) return
+        // Notify anyone listening for broadcasts about the new location.
+        val intent = Intent(ACTION_BROADCAST)
+        intent.putExtra(EXTRA_LOCATION, location)
+        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
+
+        // Update notification content if running as a foreground service.
+        if (serviceIsRunningInForeground(this)) {
+            mNotificationManager.notify(NOTIFICATION_ID, getNotification())
+        }
+    }
+
+    /**
+     * Sets the location request parameters.
+     */
+    private fun createLocationRequest() {
+        mLocationRequest = LocationRequest.create().apply {
+            interval = UPDATE_INTERVAL_IN_MILLISECONDS
+            fastestInterval = FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS
+            priority = LocationRequest.PRIORITY_HIGH_ACCURACY
+        }
+    }
+
+    private fun filterAndUpdateLocation(location: Location) {
+        //kalman filter
+        if (kalmanLatLong.get_lat() == 0.0 && kalmanLatLong.get_lng() == 0.0) {
+            location.apply {
+                kalmanLatLong.SetState(
+                    latitude,
+                    longitude,
+                    accuracy,
+                    time
+                )
+            }
+        } else {
+            location.apply {
+                kalmanLatLong.Process(
+                    latitude,
+                    longitude,
+                    accuracy,
+                    time
+                )
+                latitude = kalmanLatLong.get_lat()
+                longitude = kalmanLatLong.get_lng()
+                accuracy = kalmanLatLong.get_accuracy()
+            }
+        }
+
+        if (mLocation != null) {
+            if (location.time - mLocation!!.time < 0) return
+            if (!location.hasAccuracy() || location.accuracy > 100 || location.accuracy == 0f) return
+            if (!location.hasSpeed() || location.speed == 0f) return
+        }
+        mLocation = location
+    }
+
+
+    //notification
+
     /**
      * Returns the [NotificationCompat] used as part of the foreground service.
      */
@@ -242,110 +380,5 @@ class LocationUpdatesService : Service() {
             builder.setChannelId(CHANNEL_ID) // Channel ID
         }
         return builder.build()
-    }
-
-    private fun getLastLocation() {
-        try {
-            mFusedLocationClient.lastLocation
-                .addOnCompleteListener(OnCompleteListener<Location> { task ->
-                    if (task.isSuccessful && task.result != null) {
-                        Log.d(TAG, "getLastLocation: ")
-                        filterAndUpdateLocation(task.result)
-                    } else {
-                        Log.w(TAG, "Failed to get location.")
-                    }
-                })
-        } catch (unlikely: SecurityException) {
-            Log.e(TAG, "Lost location permission.$unlikely")
-        }
-    }
-
-    private fun onNewLocation(location: Location) {
-
-        filterAndUpdateLocation(location)
-        Log.d(TAG, "onNewLocation: trackPausing: $trackPausing")
-        if (trackPausing) return
-        // Notify anyone listening for broadcasts about the new location.
-        val intent = Intent(ACTION_BROADCAST)
-        intent.putExtra(EXTRA_LOCATION, location)
-        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
-
-        // Update notification content if running as a foreground service.
-        if (serviceIsRunningInForeground(this)) {
-            mNotificationManager.notify(NOTIFICATION_ID, getNotification())
-        }
-        Log.d(TAG, "onNewLocation: mLocation: $mLocation")
-    }
-
-    /**
-     * Sets the location request parameters.
-     */
-    private fun createLocationRequest() {
-        mLocationRequest = LocationRequest.create().apply {
-            interval = UPDATE_INTERVAL_IN_MILLISECONDS
-            fastestInterval = FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS
-            priority = LocationRequest.PRIORITY_HIGH_ACCURACY
-        }
-    }
-
-    /**
-     * Class used for the client Binder.  Since this service runs in the same process as its
-     * clients, we don't need to deal with IPC.
-     */
-    inner class LocalBinder : Binder() {
-        val service: LocationUpdatesService
-            get() = this@LocationUpdatesService
-    }
-
-    /**
-     * Returns true if this is a foreground service.
-     *
-     * @param context The [Context].
-     */
-    fun serviceIsRunningInForeground(context: Context): Boolean {
-        val manager = context.getSystemService(
-            ACTIVITY_SERVICE
-        ) as ActivityManager
-        for (service in manager.getRunningServices(Int.MAX_VALUE)) {
-            if (javaClass.name == service.service.className) {
-                if (service.foreground) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    private fun filterAndUpdateLocation(location: Location) {
-        //kalman filter
-        if (kalmanLatLong.get_lat() == 0.0 && kalmanLatLong.get_lng() == 0.0) {
-            location.apply {
-                kalmanLatLong.SetState(
-                    latitude,
-                    longitude,
-                    accuracy,
-                    time
-                )
-            }
-        } else {
-            location.apply {
-                kalmanLatLong.Process(
-                    latitude,
-                    longitude,
-                    accuracy,
-                    time
-                )
-                latitude = kalmanLatLong.get_lat()
-                longitude = kalmanLatLong.get_lng()
-                accuracy = kalmanLatLong.get_accuracy()
-            }
-        }
-
-        if (mLocation != null) {
-            if (location.time - mLocation!!.time < 0) return
-            if (!location.hasAccuracy() || location.accuracy > 100 || location.accuracy == 0f) return
-            if (!location.hasSpeed() || location.speed == 0f) return
-        }
-        mLocation = location
     }
 }
