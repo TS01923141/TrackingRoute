@@ -18,12 +18,26 @@ class MapsViewModel @Inject constructor(private val repository: LocationReposito
     val locationList = repository.locationList
     val _hasLocationPermission = MutableLiveData(false)
     val hasLocationPermission: LiveData<Boolean> = _hasLocationPermission
+    private var _currentElevation = MutableLiveData<Double>(0.0)
+    private var _currentDistance = MutableLiveData<Float>(0f)
+    val currentElevation : LiveData<Double> = _currentElevation
+    val currentDistance : LiveData<Float> = _currentDistance
 
     fun setHasLocationPermission(hasLocationPermission: Boolean) {
         _hasLocationPermission.value = hasLocationPermission
     }
 
-    fun clearLocationList() {
+    fun updateElevation(currentElevation: Double) {
+        _currentElevation.value = currentElevation
+    }
+
+    fun updateDistance(totalDistance: Float) {
+        _currentDistance.value = _currentDistance.value?.plus(totalDistance)
+    }
+
+    fun clearTrackingInfo() {
+        _currentElevation.value = 0.0
+        _currentDistance.value = 0f
         viewModelScope.launch {
             repository.deleteAll()
         }

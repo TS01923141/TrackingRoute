@@ -24,9 +24,14 @@
             map:layout_constraintEnd_toEndOf="parent"
             android:layout_marginBottom="16dp"/>
 
+        <include
+            android:id="@+id/include_maps_trackingTopBar"
+            layout="@layout/include_tracking_top_bar" />
+
         <ImageView
             android:visibility="gone"
             android:id="@+id/imageView_maps_pausing_background"
+            android:elevation="3dp"
             android:layout_width="0dp"
             android:layout_height="0dp"
             map:layout_constraintStart_toStartOf="parent"

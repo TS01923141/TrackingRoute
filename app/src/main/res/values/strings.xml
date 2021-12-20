@@ -8,4 +8,7 @@
     <string name="hello_blank_fragment">Hello blank fragment</string>
     <string name="location_updated">Location Updated: %1$s</string>
     <string name="launch_activity">Launch activity</string>
+    <string name="current_elevation">目前高度</string>
+    <string name="current_distance">累積距離</string>
+    <string name="current_time">累積時間</string>
 </resources>

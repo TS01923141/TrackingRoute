@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.util.Log
 import android.view.View
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import com.example.trackingroute.R
 
@@ -26,6 +27,9 @@ import com.example.trackingroute.ui.permission.PermissionRequestFragment
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.*
+import java.util.*
+import java.util.concurrent.TimeUnit
 
 /*
     紀錄GPS，存到Room，輸出GPX
@@ -71,6 +75,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     private var polylineOptions = PolylineOptions()
     private var polyline: Polyline? = null
 
+    private var timerJob: Job? = null
+
     // Monitors the state of the connection to the service.
     private val mServiceConnection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -89,7 +95,6 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate: requestingLocationUpdates: ${Utils.requestingLocationUpdates(this)}")
         binding = ActivityMapsBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -114,6 +119,10 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
             Intent(this, LocationUpdatesService::class.java), mServiceConnection,
             BIND_AUTO_CREATE
         )
+        if (Utils.requestingLocationUpdates(this@MapsActivity) &&
+            !Utils.pausingLocationUpdates(this@MapsActivity)) {
+            timerJob = startTimerJob()
+        }
     }
 
     override fun onStop() {
@@ -126,11 +135,11 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         }
         PreferenceManager.getDefaultSharedPreferences(this)
             .unregisterOnSharedPreferenceChangeListener(this)
+        timerJob?.cancel()
         super.onStop()
     }
 
     override fun onDestroy() {
-        //TODO("service被同步kill了")
         super.onDestroy()
     }
 
@@ -170,10 +179,30 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     @SuppressLint("MissingPermission")
     override fun onMapReady(googleMap: GoogleMap) {
         mMap = googleMap
+        mMap.moveCamera(CameraUpdateFactory.newLatLngZoom(
+            LatLng(viewModel.locationList.value?.last()?.lat ?: 0.0,
+                viewModel.locationList.value?.last()?.lng ?: 0.0), 18f))
         if (viewModel.hasLocationPermission.value == true) mMap.isMyLocationEnabled = true
     }
 
-    private fun drawPolylineList(locationList: List<Location>) {
+    private fun drawPolylineListAndUpdateDistance(locationList: List<Location>) {
+        //update distance
+        var totalDistance = 0f
+        if (!polylineOptions.points.isNullOrEmpty()) {
+            val lastLocation = Location("").apply {
+                latitude = polylineOptions.points.last().latitude
+                longitude = polylineOptions.points.last().longitude
+            }
+            totalDistance += lastLocation.distanceTo(locationList.first())
+        }
+        if (locationList.size > 1) {
+            for(i in 0 until  locationList.size - 1) {
+                totalDistance += locationList[i].distanceTo(locationList[i+1])
+            }
+        }
+        viewModel.updateDistance(totalDistance)
+
+        //draw polyline
         polyline?.remove()
         locationList.forEach {
             polylineOptions.add(LatLng(it.latitude, it.longitude))
@@ -181,18 +210,36 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         polyline = mMap.addPolyline(polylineOptions)
     }
 
-    private fun drawPolyline(location: Location) {
-        polyline?.remove()
-        polylineOptions.add(LatLng(location.latitude, location.longitude))
-        polyline = mMap.addPolyline(polylineOptions)
+    //job
+
+    private fun startTimerJob(): Job {
+        return lifecycleScope.launch(Dispatchers.IO) {
+            while (true) {
+                delay(1000)
+                val locationList = viewModel.locationList.value
+                if (locationList.isNullOrEmpty()) return@launch
+                val currentTime = Calendar.getInstance().timeInMillis - locationList.first().time
+                val formatTime = String.format("%02d:%02d:%02d",
+                    TimeUnit.MILLISECONDS.toHours(currentTime),
+                    TimeUnit.MILLISECONDS.toMinutes(currentTime) - TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(currentTime)),
+                    TimeUnit.MILLISECONDS.toSeconds(currentTime) - TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(currentTime))
+                )
+                withContext(Dispatchers.Main) {
+                    binding.includeMapsTrackingTopBar.textViewTrackingTopBarTimeContent.text =
+                        formatTime
+                }
+            }
+        }
     }
 
-    //ui
+    //lifeData observe
 
     private fun initObserve() {
         with(viewModel) {
             hasLocationPermission.observe(this@MapsActivity, ::handleHasLocationPermission)
             locationList.observe(this@MapsActivity, ::handleLocationList)
+            currentElevation.observe(this@MapsActivity, ::handleCurrentElevation)
+            currentDistance.observe(this@MapsActivity, ::handleCurrentDistance)
         }
     }
 
@@ -214,11 +261,34 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                 time = locationEntity.time
             })
         }
+        viewModel.updateElevation(locationList.last().altitude)
         if (this@MapsActivity::mMap.isInitialized) {
-            mMap.animateCamera(CameraUpdateFactory.newLatLng(LatLng(locationEntityList.last().lat,
-                locationEntityList.last().lng)))
-            drawPolylineList(locationList)
+            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(locationEntityList.last().lat,
+                locationEntityList.last().lng), 18f))
+            drawPolylineListAndUpdateDistance(locationList)
         }
+    }
+
+    private fun handleCurrentElevation(currentElevation: Double) {
+        val ele = "${Math.floor(currentElevation).toInt()}m"
+        binding.includeMapsTrackingTopBar.textViewTrackingTopBarElevationContent.text = ele
+    }
+
+    private fun handleCurrentDistance(currentDistance: Float) {
+        binding.includeMapsTrackingTopBar.textViewTrackingTopBarDistanceContent.text =
+            String.format("%.2fkm", currentDistance / 1000)
+    }
+
+    //ui
+
+    private fun defaultTrackingUi() {
+        //default TrackingTopBar
+        binding.includeMapsTrackingTopBar.textViewTrackingTopBarElevationContent.text = "0m"
+        binding.includeMapsTrackingTopBar.textViewTrackingTopBarDistanceContent.text = "0.00km"
+        binding.includeMapsTrackingTopBar.textViewTrackingTopBarTimeContent.text = "00:00:00"
+        //clear polyline
+        polylineOptions = PolylineOptions()
+        polyline?.remove()
     }
 
     private fun initButton() {
@@ -234,8 +304,10 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
 
         binding.apply {
             fabMapsStart.setOnClickListener {
-                if (viewModel.hasLocationPermission.value == true) mService?.requestLocationUpdates()
-                else checkAndRequestPermission()
+                if (viewModel.hasLocationPermission.value == true) {
+                    mService?.requestLocationUpdates()
+                    timerJob = startTimerJob()
+                } else checkAndRequestPermission()
             }
             fabMapsPause.setOnClickListener {
                 mService?.pauseLocationUpdates()
@@ -247,9 +319,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                 //show end dialog
                 mService?.resumeLocationUpdates()
                 mService?.removeLocationUpdates()
-                polylineOptions = PolylineOptions()
-                polyline?.remove()
-                viewModel.clearLocationList()
+                viewModel.clearTrackingInfo()
+                defaultTrackingUi()
             }
         }
     }
@@ -278,6 +349,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         binding.apply {
             when(state) {
                 TRACK_START -> {
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
                     imageViewMapsPausingBackground.visibility = View.GONE
                     fabMapsStart.visibility = View.GONE
                     fabMapsPause.visibility = View.VISIBLE
@@ -285,6 +357,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                     fabMapsStop.visibility = View.GONE
                 }
                 TRACK_PAUSE -> {
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
                     imageViewMapsPausingBackground.visibility = View.VISIBLE
                     fabMapsStart.visibility = View.GONE
                     fabMapsPause.visibility = View.GONE
@@ -292,6 +365,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                     fabMapsStop.visibility = View.VISIBLE
                 }
                 TRACK_RESUME -> {
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
                     imageViewMapsPausingBackground.visibility = View.GONE
                     fabMapsStart.visibility = View.GONE
                     fabMapsPause.visibility = View.VISIBLE
@@ -299,6 +373,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                     fabMapsStop.visibility = View.GONE
                 }
                 TRACK_STOP -> {
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.GONE
                     imageViewMapsPausingBackground.visibility = View.GONE
                     fabMapsStart.visibility = View.VISIBLE
                     fabMapsPause.visibility = View.GONE
