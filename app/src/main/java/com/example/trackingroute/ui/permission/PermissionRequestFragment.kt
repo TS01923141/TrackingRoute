@@ -157,7 +157,7 @@ class PermissionRequestFragment : Fragment() {
         return when (permission) {
             FINE_LOCATION -> requireContext().getString(R.string.permission_explain_location)
 //            CAMERA -> requireContext().getString(R.string.permission_explain_camera)
-//            WRITE_EXTERNAL_STORAGE -> requireContext().getString(R.string.permission_explain_write_external_storage)
+            WRITE_EXTERNAL_STORAGE -> requireContext().getString(R.string.permission_explain_write_external_storage)
             else -> ""
         }
     }

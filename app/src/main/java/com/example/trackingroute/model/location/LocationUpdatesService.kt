@@ -15,6 +15,7 @@ import com.example.trackingroute.model.database.LocationDatabase
 import com.example.trackingroute.model.database.LocationEntity
 import com.example.trackingroute.model.repository.LocationRepository
 import com.example.trackingroute.model.utils.KalmanLatLong
+import com.example.trackingroute.model.utils.Utils
 import com.example.trackingroute.ui.maps.MapsActivity
 import com.google.android.gms.location.*
 import com.google.android.gms.tasks.OnCompleteListener
@@ -25,17 +26,11 @@ import javax.inject.Inject
 
 private const val CHANNEL_ID = "tracking_route_channel"
 private const val TAG = "LocationUpdatesService"
-private const val PACKAGE_NAME = "com.example.trackingroute.model.location"
 private const val EXTRA_STARTED_FROM_NOTIFICATION: String =
     "$PACKAGE_NAME.started_from_notification"
 
 @AndroidEntryPoint
 class LocationUpdatesService : Service() {
-
-    companion object {
-        const val EXTRA_LOCATION: String = "$PACKAGE_NAME.location"
-        const val ACTION_BROADCAST: String = "$PACKAGE_NAME.broadcast"
-    }
 
     @Inject lateinit var repository: LocationRepository
 
@@ -274,15 +269,11 @@ class LocationUpdatesService : Service() {
 
         filterAndUpdateLocation(location)
 
+        if (trackPausing) return
+
         insertLocationJob = CoroutineScope(Dispatchers.IO).launch {
             repository.insert(location)
         }
-
-        if (trackPausing) return
-        // Notify anyone listening for broadcasts about the new location.
-        val intent = Intent(ACTION_BROADCAST)
-        intent.putExtra(EXTRA_LOCATION, location)
-        LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
 
         // Update notification content if running as a foreground service.
         if (serviceIsRunningInForeground(this)) {

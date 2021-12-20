@@ -2,6 +2,7 @@
     <string name="app_name">TrackingRoute</string>
     <string name="title_activity_maps">MapsActivity</string>
     <string name="permission_explain_location">The app need always allow location permission to locate your location even close screen or using other app.</string>
+    <string name="permission_explain_write_external_storage">The app need write external storage permission to save tracking route gpx file.</string>
     <string name="no_thanks">no thanks</string>
     <string name="ok">ok</string>
     <!-- TODO: Remove or change this placeholder text -->
@@ -11,4 +12,10 @@
     <string name="current_elevation">目前高度</string>
     <string name="current_distance">累積距離</string>
     <string name="current_time">累積時間</string>
+    <string name="track_name">track name</string>
+    <string name="save_track">save track</string>
+    <string name="please_input_track_name">please input track name</string>
+    <string name="cancel">cancel</string>
+    <string name="delete">delete</string>
+    <string name="save">save</string>
 </resources>

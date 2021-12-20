@@ -1,27 +1,26 @@
 package com.example.trackingroute.ui.maps
 
-import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.LiveData
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.example.trackingroute.model.database.LocationDatabase
+import android.app.Application
+import androidx.lifecycle.*
 import com.example.trackingroute.model.repository.LocationRepository
-import dagger.hilt.android.AndroidEntryPoint
+import com.example.trackingroute.model.utils.GPXTransferUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class MapsViewModel @Inject constructor(private val repository: LocationRepository): ViewModel() {
+class MapsViewModel @Inject constructor(
+    app: Application,
+    private val repository: LocationRepository
+) : AndroidViewModel(app) {
     val locationList = repository.locationList
     val _hasLocationPermission = MutableLiveData(false)
     val hasLocationPermission: LiveData<Boolean> = _hasLocationPermission
     private var _currentElevation = MutableLiveData<Double>(0.0)
     private var _currentDistance = MutableLiveData<Float>(0f)
-    val currentElevation : LiveData<Double> = _currentElevation
-    val currentDistance : LiveData<Float> = _currentDistance
+    val currentElevation: LiveData<Double> = _currentElevation
+    val currentDistance: LiveData<Float> = _currentDistance
 
     fun setHasLocationPermission(hasLocationPermission: Boolean) {
         _hasLocationPermission.value = hasLocationPermission
@@ -41,5 +40,9 @@ class MapsViewModel @Inject constructor(private val repository: LocationReposito
         viewModelScope.launch {
             repository.deleteAll()
         }
+    }
+
+    fun saveTrack(fileName: String) {
+        GPXTransferUtils.createGpx(getApplication(), fileName, locationList.value!!)
     }
 }

@@ -5,6 +5,7 @@
       <map>
         <entry key="app/src/main/res/layout/activity_main.xml" value="0.27239583333333334" />
         <entry key="app/src/main/res/layout/activity_maps.xml" value="0.2864583333333333" />
+        <entry key="app/src/main/res/layout/dialog_save_track.xml" value="0.19927536231884058" />
         <entry key="app/src/main/res/layout/fragment_permission_request.xml" value="0.27239583333333334" />
         <entry key="app/src/main/res/layout/include_tracking_top_bar.xml" value="0.335" />
       </map>

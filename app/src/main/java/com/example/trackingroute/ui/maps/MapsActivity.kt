@@ -1,6 +1,7 @@
 package com.example.trackingroute.ui.maps
 
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.*
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
 import android.location.Location
@@ -9,7 +10,10 @@ import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import android.view.View
+import android.widget.EditText
+import android.widget.Toast
 import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import com.example.trackingroute.R
@@ -22,7 +26,8 @@ import com.google.android.gms.maps.model.LatLng
 import com.example.trackingroute.databinding.ActivityMapsBinding
 import com.example.trackingroute.model.database.LocationEntity
 import com.example.trackingroute.model.location.LocationUpdatesService
-import com.example.trackingroute.model.location.Utils
+import com.example.trackingroute.model.utils.GPXTransferUtils
+import com.example.trackingroute.model.utils.Utils
 import com.example.trackingroute.ui.permission.PermissionRequestFragment
 import com.google.android.gms.maps.model.Polyline
 import com.google.android.gms.maps.model.PolylineOptions
@@ -107,6 +112,12 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         checkAndRequestPermission()
         initButton()
         initObserve()
+
+        //test
+        val list = mutableListOf<LocationEntity>()
+        list.add(LocationEntity(12.34, 34.12, 12.3, 12345678))
+        list.add(LocationEntity(34.12, 12.34, 12.3, 12345678))
+        GPXTransferUtils.createGpx(this, "test", list)
     }
 
     override fun onStart() {
@@ -156,7 +167,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
 
             //the list of permission that you want request or check.
             val requestFragment = PermissionRequestFragment.newInstance(arrayListOf(
-                PermissionRequestFragment.FINE_LOCATION
+                PermissionRequestFragment.FINE_LOCATION,
+//                PermissionRequestFragment.WRITE_EXTERNAL_STORAGE
             ))
             //start request permission
             beginTransaction()
@@ -281,7 +293,10 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
 
     //ui
 
-    private fun defaultTrackingUi() {
+    private fun stopTracking() {
+        mService?.resumeLocationUpdates()
+        mService?.removeLocationUpdates()
+        viewModel.clearTrackingInfo()
         //default TrackingTopBar
         binding.includeMapsTrackingTopBar.textViewTrackingTopBarElevationContent.text = "0m"
         binding.includeMapsTrackingTopBar.textViewTrackingTopBarDistanceContent.text = "0.00km"
@@ -317,12 +332,31 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
             }
             fabMapsStop.setOnClickListener {
                 //show end dialog
-                mService?.resumeLocationUpdates()
-                mService?.removeLocationUpdates()
-                viewModel.clearTrackingInfo()
-                defaultTrackingUi()
+                saveTrackDialog().show()
             }
         }
+    }
+
+    private fun saveTrackDialog(): Dialog {
+        val view = layoutInflater.inflate(R.layout.dialog_save_track, null)
+        val editText_saveTrack_trackName = view.findViewById<EditText>(R.id.editText_saveTrack_trackName)
+        return AlertDialog.Builder(this)
+            .setTitle(getString(R.string.save_track))
+            .setView(view)
+            .setNegativeButton(getString(R.string.cancel), DialogInterface.OnClickListener { _, _ ->  })
+            .setNeutralButton(getString(R.string.delete), DialogInterface.OnClickListener { dialogInterface, i ->
+                stopTracking()
+            })
+            .setPositiveButton(getString(R.string.save), DialogInterface.OnClickListener { dialogInterface, i ->
+                val fileName = editText_saveTrack_trackName.text.toString()
+                if (fileName.isNullOrEmpty()){
+                    Toast.makeText(this, getString(R.string.please_input_track_name), Toast.LENGTH_SHORT).show()
+                    return@OnClickListener
+                }
+                viewModel.saveTrack(fileName)
+                stopTracking()
+            })
+            .create()
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, s: String?) {
