@@ -31,7 +31,7 @@
         <ImageView
             android:visibility="gone"
             android:id="@+id/imageView_maps_pausing_background"
-            android:elevation="3dp"
+            android:elevation="1dp"
             android:layout_width="0dp"
             android:layout_height="0dp"
             map:layout_constraintStart_toStartOf="parent"

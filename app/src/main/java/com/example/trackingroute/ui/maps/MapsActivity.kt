@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import android.view.View
+import android.view.animation.AnimationUtils
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.viewModels
@@ -52,16 +53,6 @@ import java.util.concurrent.TimeUnit
     加上按鍵切換動畫
     畫線
     停止鍵onClick後跳dialog輸入gpx名稱
-
-    receiver把location insert到room
-    repository從room取得liveData<List<Location>>
-    activity透過viewModel的repository取得最後一點更新目前位置
-
-    先完成room, repository
-    receiver拆出來
-
-    service不該在activity關閉時跟著關閉
-    ＊先確認是不是真的跟著關閉
  */
 private const val TAG = "MapsActivity"
 private const val TRACK_START = 0
@@ -380,13 +371,19 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
     }
 
     private fun setButtonState(state: Int) {
+        Log.d(TAG, "setButtonState: state: $state")
         binding.apply {
             when(state) {
                 TRACK_START -> {
                     includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.startAnimation(
+                        AnimationUtils.loadAnimation(this@MapsActivity, R.anim.side_out_top)
+                    )
                     imageViewMapsPausingBackground.visibility = View.GONE
+                    fabMapsStart.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsStart.visibility = View.GONE
                     fabMapsPause.visibility = View.VISIBLE
+                    fabMapsPause.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_out))
                     fabMapsResume.visibility = View.GONE
                     fabMapsStop.visibility = View.GONE
                 }
@@ -394,24 +391,37 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
                     includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
                     imageViewMapsPausingBackground.visibility = View.VISIBLE
                     fabMapsStart.visibility = View.GONE
+                    fabMapsPause.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsPause.visibility = View.GONE
                     fabMapsResume.visibility = View.VISIBLE
+                    fabMapsResume.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_out))
                     fabMapsStop.visibility = View.VISIBLE
+                    fabMapsStop.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_out))
                 }
                 TRACK_RESUME -> {
                     includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.VISIBLE
                     imageViewMapsPausingBackground.visibility = View.GONE
                     fabMapsStart.visibility = View.GONE
                     fabMapsPause.visibility = View.VISIBLE
+                    fabMapsPause.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_out))
+                    fabMapsResume.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsResume.visibility = View.GONE
+                    fabMapsStop.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsStop.visibility = View.GONE
                 }
                 TRACK_STOP -> {
+                    includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.startAnimation(
+                        AnimationUtils.loadAnimation(this@MapsActivity, R.anim.side_in_top)
+                    )
                     includeMapsTrackingTopBar.constraintLayoutTrackingTopBarFrame.visibility = View.GONE
                     imageViewMapsPausingBackground.visibility = View.GONE
+                    fabMapsStart.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_out))
                     fabMapsStart.visibility = View.VISIBLE
+                    fabMapsPause.clearAnimation()
                     fabMapsPause.visibility = View.GONE
+                    fabMapsResume.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsResume.visibility = View.GONE
+                    fabMapsStop.startAnimation(AnimationUtils.loadAnimation(this@MapsActivity, R.anim.zoom_in))
                     fabMapsStop.visibility = View.GONE
                 }
             }
