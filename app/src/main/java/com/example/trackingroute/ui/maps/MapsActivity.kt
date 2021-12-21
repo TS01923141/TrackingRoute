@@ -103,12 +103,6 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, OnSharedPreference
         checkAndRequestPermission()
         initButton()
         initObserve()
-
-        //test
-        val list = mutableListOf<LocationEntity>()
-        list.add(LocationEntity(12.34, 34.12, 12.3, 12345678))
-        list.add(LocationEntity(34.12, 12.34, 12.3, 12345678))
-        GPXTransferUtils.createGpx(this, "test", list)
     }
 
     override fun onStart() {
