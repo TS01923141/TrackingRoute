@@ -7,9 +7,18 @@ import androidx.room.TypeConverters
 
 @Entity
 data class LocationEntity(
-    val lat: Double,
-    val lng: Double,
-    val ele: Double,
-    val time: Long,
+    var lat: Double,
+    var lng: Double,
+    var ele: Double,
+    var time: Long,
     @PrimaryKey(autoGenerate = true) val id: Int = 0
-)
+) {
+    companion object {
+        val empty = LocationEntity(
+            0.0,
+            0.0,
+            0.0,
+            0
+        )
+    }
+}
